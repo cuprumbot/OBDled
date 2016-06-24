@@ -1,44 +1,57 @@
 /*************************************************************************
-* Arduino OBD-II Data Logger 
+* OBDled
 * 
-* based on:
-* Arduino GPS/OBD-II/G-Force Data Logger
-* Distributed under GPL v2.0
-* Copyright (c) 2013 Stanley Huang <stanleyhuangyc@gmail.com>
-* All rights reserved.
+* Based on 
+* (C) 2013 Stanley Huang <stanleyhuangyc@gmail.com> [OBD]
+* (C) 2015 Rinky-Dink Electronics, Henning Karlsen, http://www.RinkyDinkElectronics.com [Screen]
 *************************************************************************/
 
+/* OBD UART */
 #include <OBD.h>
-#include "MicroLCD.h"
-#include "images.h"
-#include "config.h"
 #include "datalogger.h"
-#include <Adafruit_NeoPixel.h>
-//#include <SPI.h>
-//#include <Arduino.h>
-//#include <Wire.h>
-
-// logger states
 #define STATE_SD_READY  0x1
 #define STATE_OBD_READY 0x2
 #define STATE_GPS_FOUND 0x4
 #define STATE_GPS_READY 0x8
 #define STATE_ACC_READY 0x10
 #define STATE_SLEEPING  0x20
+/* 
+ * posible pid
+ * static byte pidTier1[] = {PID_RPM, PID_SPEED, PID_ENGINE_LOAD, PID_THROTTLE};
+ * static byte pidTier2[] = {PID_INTAKE_MAP, PID_MAF_FLOW, PID_TIMING_ADVANCE};
+ * static byte pidTier3[] = {PID_COOLANT_TEMP, PID_INTAKE_TEMP, PID_AMBIENT_TEMP, PID_FUEL_LEVEL};
+ */
+static byte pidTier1[] = {PID_RPM, PID_SPEED};
+static byte pidTier2[] = {PID_THROTTLE};
+static byte pidTier3[] = {PID_INTAKE_TEMP};
 
-// led strip pin
-#define STRIP_PIN 3
+/* LCD TFT touch-enabled screen */
+#include <UTFT.h>
+#include <ITDB02_Touch.h>
+#include <UTFT_Buttons_ITDB.h>
+extern uint8_t SmallFont[];
+extern uint8_t BigFont[];
+extern uint8_t SevenSegNumFont[];
+// SainSmart screen on Arduino Mega
+UTFT myGLCD(SSD1289,38,39,40,41);
+ITDB02_Touch myTouch(6,5,4,3,2);
+UTFT_Buttons myButtons(&myGLCD, &myTouch);
+int buttonMode, buttonLeds, buttonPerf, buttonOther, buttonPressed;
+int bMode = 0;
+int bLeds = 0;
 
+
+/* Neopixel compatible RGB LED strip */
+#include <Adafruit_NeoPixel.h>
+// pin
+#define STRIP_PIN1    3
+#define STRIP_PIN2    4
+// ammount of leds
 #define MIN_PIXELS    0
-//#define RPM_PIXELS    32
-#define RPM_PIXELS 43
-//#define SHIFT_PIXELS  4
-#define SHIFT_PIXELS 15
-#define TOTAL_PIXELS  64
-
-#define MIN_SPEED     0
-#define MAX_SPEED     150
-
+#define RPM_PIXELS    29
+#define SHIFT_PIXELS  1
+#define TOTAL_PIXELS  30
+// revolutions per minute
 #define MIN_RPM       0
 #define SHORT_RPM     2800
 #define SHIFT_RPM     3200
@@ -48,19 +61,8 @@
 // original logger program
 static int lastSpeed = -1;
 static int speed = 0;
-//static uint32_t distance = 0;
-static uint32_t startTime = 0;
 static uint8_t lastPid = 0;
 static int lastValue = 0;
-
-/*
-static byte pidTier1[] = {PID_RPM, PID_SPEED, PID_ENGINE_LOAD, PID_THROTTLE};
-static byte pidTier2[] = {PID_INTAKE_MAP, PID_MAF_FLOW, PID_TIMING_ADVANCE};
-static byte pidTier3[] = {PID_COOLANT_TEMP, PID_INTAKE_TEMP, PID_AMBIENT_TEMP, PID_FUEL_LEVEL};
-*/
-static byte pidTier1[] = {PID_RPM, PID_SPEED};
-static byte pidTier2[] = {PID_THROTTLE};
-static byte pidTier3[] = {PID_INTAKE_TEMP};
 
 #define TIER_NUM1 sizeof(pidTier1)
 #define TIER_NUM2 sizeof(pidTier2)
@@ -74,45 +76,39 @@ int tempVal     = 0;
 
 // performance
 #define TARGET_DISTANCE 200
-
 boolean measuringPerformance = true;
 int prevSpeedVal    = 0;
-int distance        = 0;
-
+float distance        = 0;
 long speedTime      = 0;
 long firstSpeedTime = 0;
 long prevSpeedTime  = 0;
-
 long currPerfTime   = 0;
 long bestPerfTime   = 99999;
 
 // leds
-Adafruit_NeoPixel ledstrip = Adafruit_NeoPixel(TOTAL_PIXELS, STRIP_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel ledstrip1 = Adafruit_NeoPixel(TOTAL_PIXELS, STRIP_PIN1, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel ledstrip2 = Adafruit_NeoPixel(TOTAL_PIXELS, STRIP_PIN2, NEO_GRB + NEO_KHZ800);
 
-uint32_t TEST_COLOR     = ledstrip.Color(20, 20, 20);
-uint32_t RPM_COLOR      = ledstrip.Color(20, 0, 0);
-uint32_t OFF_COLOR      = ledstrip.Color(0, 0, 0);
-uint32_t SHORT_COLOR    = ledstrip.Color(0, 20, 0);
-uint32_t SHIFT_COLOR    = ledstrip.Color(0, 0, 30);
-uint32_t OVER_REV_COLOR = ledstrip.Color(20, 20, 20);
+uint32_t TEST_COLOR     = ledstrip1.Color(20, 20, 20);
+uint32_t RPM_COLOR      = ledstrip1.Color(20, 0, 0);
+uint32_t OFF_COLOR      = ledstrip1.Color(0, 0, 0);
+uint32_t SHORT_COLOR    = ledstrip1.Color(0, 20, 0);
+uint32_t SHIFT_COLOR    = ledstrip1.Color(0, 0, 30);
+uint32_t OVER_REV_COLOR = ledstrip1.Color(20, 20, 20);
 
-// matrix
-//static byte rpmLedList[] = {2,3,4,5, 10,11,12,13, 18,19,20,21, 26,27,28,29, 34,35,36,37, 42,43,44,45, 50,51,52,53, 58,59,60,61};
-//static byte shiftLedList[] = {2,3,4,5};
-//static byte rpmLedList[] = {58,59,60,61, 50,51,52,53, 42,43,44,45, 34,35,36,37, 26,27,28,29, 18,19,20,21, 10,11,12,13, 2,3,4,5};
-//static byte shiftLedList[] = {58,59,60,61};
-static byte rpmLedList[] = {6,7,8,9,10,11,12,13,14,15,16,17,18,19,20, 32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59};
-static byte shiftLedList[] = {6,7,8,9,10,11,12,13,14,15,16,17,18,19,20};
+uint32_t ALL_COLOR[] = {  ledstrip1.Color(20, 0, 0),
+                          ledstrip1.Color( 0,20, 0),
+                          ledstrip1.Color( 0, 0,20),
+                          ledstrip1.Color(15,15,15)  };
 
 // strip
-//static byte rpmLedList[]   = {0,59,1,58,2,57,3,56,4,55,5,54,6,53,7,52,8,51,9,50,10,49,11,48,12,47,13,46,14,45,15,44,16,43,17,42,18,41,19,40,20,39,21,38,22,37,23,36,24,35,25,34,26,32,27,32,28,31,29,30};
-//static byte shiftLedList[] = {0, 1, 2, 3, 4, 55, 56, 57, 58, 59};
+static byte rpmLedList[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29};
+static byte shiftLedList[] = {0};
 
 boolean updateLeds = false;
 int rpmLed   = 0;
-//int speedLed = 0;
 
-byte pidValue[TIER_NUM1];
+//byte pidValue[TIER_NUM1];
 
 long timeNext = 1000;
 int updatesPerSecond = 0;
@@ -123,8 +119,8 @@ public:
     COBDLogger():state(0) {}
     void setup()
     {
-        showStates();
-
+        myGLCD.clrScr();
+        
         do {
             showStates();
         } while (!init());
@@ -137,6 +133,11 @@ public:
     }
     void loop()
     {
+
+        // TO DO: Consider changing to
+        // byte read(const byte pid[], byte count, int result[]);
+        // to read multiple PID at the same time
+
         /* 
           Las variables static funcionan como en C, una vez definidas su valor se conserva por el resto del programa
           aunque la ejecucion de la funcion en la que se encuentran termine, y esta vuelva a ser llamada.
@@ -191,8 +192,6 @@ private:
         // send a query to OBD adapter for specified OBD-II pid
         if (read(pid, value)) {
             dataTime = millis();
-            // log data to SD card
-            // logData(0x100 | pid, value);
             lastValue = value;
             lastPid = pid;
         }
@@ -200,52 +199,39 @@ private:
     }   
     void reconnect()
     {
-        lcd.clear();
-        lcd.setFontSize(FONT_SIZE_MEDIUM);
-        lcd.print("Reconnecting");
-        startTime = millis();
+        //startTime = millis();
         state &= ~(STATE_OBD_READY | STATE_ACC_READY);
         state |= STATE_SLEEPING;
         for (uint16_t i = 0; ; i++) {
-            if (i == 5) {
-                lcd.backlight(false);
-                lcd.clear();
-            }
             if (init()) {
                 int value;
-                if (read(PID_RPM, value) && value > 0)
-                    break;
+                if (read(PID_RPM, value) && value > 0) break;
             }
         }
         state &= ~STATE_SLEEPING;
         recover();
         setup();
     }
-    void showTickCross(bool yes)
-    {
-        lcd.draw(yes ? tick : cross, 16, 16);
-    }
     
     // Show if OBD sensor and data acquisition are ready
     void showStates()
     {
-        lcd.setFontSize(FONT_SIZE_MEDIUM);
-        lcd.setCursor(0, 4);
-        lcd.print("OBD ");
-        showTickCross(state & STATE_OBD_READY);
-        lcd.setCursor(0, 6);
-        lcd.print("ACC ");
-        showTickCross(state & STATE_ACC_READY);
+        //myGLCD.clrScr();
+      
+        myGLCD.setColor(VGA_WHITE);
+        myGLCD.setBackColor(VGA_BLACK);
+        myGLCD.setFont(BigFont);
 
-        // Test the strips
-        for (int i=0;i<TOTAL_PIXELS;i++){
-          ledstrip.setPixelColor(i, OFF_COLOR);
-        }
-        for(int i=0;i<RPM_PIXELS;i++){
-          //ledstrip.setPixelColor(i, TEST_COLOR);
-          ledstrip.setPixelColor(rpmLedList[i], TEST_COLOR);         
-        }
-        ledstrip.show();
+        myGLCD.print("OBDled by cuprumbot", 8, 20);
+        myGLCD.print("Initializing...", 8, 60);
+
+        myGLCD.print("OBD", 20, 160);
+        myGLCD.print("ACC", 20, 200);
+
+        if (state & STATE_OBD_READY) myGLCD.print("OK", 100, 160);
+        if (state & STATE_ACC_READY) myGLCD.print("OK", 100, 200);
+        
+        // TO DO: This is a good place to test the strips
     }
     
     void showLoggerData(byte pid, int value)
@@ -253,25 +239,44 @@ private:
         char buf[8];
         switch (pid) {
         case PID_RPM:
-            lcd.setCursor(64, 0);
-            lcd.setFontSize(FONT_SIZE_XLARGE);
-            lcd.printInt((unsigned int)value % 10000, 4);
 
             rpmVal = (unsigned int)value % 10000;
             rpmLed = map(rpmVal, MIN_RPM, MAX_RPM, MIN_PIXELS, RPM_PIXELS);
+
+            myGLCD.setFont(SevenSegNumFont);
+
+            if (rpmVal < 1000) {
+              myGLCD.setColor(VGA_BLACK);
+              myGLCD.fillRect(20,40,51,89);
+              myGLCD.setColor(VGA_WHITE);
+              myGLCD.printNumI(rpmVal, 52, 40, 3);
+            } else {
+              myGLCD.printNumI(rpmVal, 20, 40, 4);
+            }
+            
             updateLeds = true;
             
             break;
         case PID_SPEED:
-            if (lastSpeed != value) {
-                lcd.setCursor(0, 0);
-                lcd.setFontSize(FONT_SIZE_XLARGE);
-                lcd.printInt((unsigned int)value % 1000, 3);
-                lastSpeed = value;
-            }
 
             prevSpeedVal = speedVal;
             speedVal = (unsigned int)value % 1000; 
+
+            myGLCD.setFont(SevenSegNumFont);
+
+            if (speedVal < 10) {
+              myGLCD.setColor(VGA_BLACK);
+              myGLCD.fillRect(52,120,115,169);
+              myGLCD.setColor(VGA_WHITE);
+              myGLCD.printNumI(speedVal, 116, 120, 1);
+            } else if (speedVal < 100) {
+              myGLCD.setColor(VGA_BLACK);
+              myGLCD.fillRect(52,120,83,169);
+              myGLCD.setColor(VGA_WHITE);
+              myGLCD.printNumI(speedVal, 84, 120, 2);
+            } else {
+              myGLCD.printNumI(speedVal, 52, 120, 3);
+            }
 
             if (speedVal == 0) {
               measuringPerformance = true;
@@ -281,6 +286,8 @@ private:
             } else if (measuringPerformance) {
               prevSpeedTime = speedTime;
               speedTime = millis();
+              // speedVal + prevSpeedVal / 2  --> average speed in km/h
+              // speedTime - prevSpeedTime    --> elapsed time in ms
               distance += (speedVal + prevSpeedVal) * (speedTime - prevSpeedTime) / 7200;
               
               if (distance > TARGET_DISTANCE) {
@@ -289,56 +296,56 @@ private:
                 currPerfTime = speedTime - firstSpeedTime;
                 if (currPerfTime < bestPerfTime) bestPerfTime = currPerfTime;
 
-                /*
-                lcd.setFontSize(FONT_SIZE_MEDIUM);
-                lcd.setCursor(0, 4);
-                lcd.print((unsigned int) currPerfTime, 5);
-                lcd.setCursor(0, 6);
-                lcd.print((unsigned int) bestPerfTime, 5);
-                */
+                myGLCD.setFont(BigFont);
+                //myGLCD.print("PERF", 220, 80);
+                //myGLCD.print("BEST", 220, 140);
+                myGLCD.printNumI(currPerfTime, 220, 100, 5);
+                myGLCD.printNumI(bestPerfTime, 220, 160, 5);
               }
             }
             
             break;
-        // MINIMAL TEST
+            
         /*
         case PID_THROTTLE:
-            lcd.setCursor(24, 5);
-            lcd.setFontSize(FONT_SIZE_SMALL);
-            lcd.printInt(value % 100, 3);
-
             throttleVal = value % 100;
             break;
         case PID_INTAKE_TEMP:
-            if (value < 1000) {
-                lcd.setCursor(102, 5);
-                lcd.setFontSize(FONT_SIZE_SMALL);
-                lcd.printInt(value, 3);
-            }
-
             tempVal = value;
             break;
         */
         }
 
         if (updateLeds) {
-          for (int i=0; i<rpmLed && i<RPM_PIXELS; i++) ledstrip.setPixelColor(rpmLedList[i], RPM_COLOR);
-          for (int i=rpmLed; i<RPM_PIXELS; i++) ledstrip.setPixelColor(rpmLedList[i], OFF_COLOR);
+          updateLeds = false;
+          
+          for (int i=0; i<rpmLed && i<RPM_PIXELS; i++) ledstrip1.setPixelColor(rpmLedList[i], ALL_COLOR[bLeds]);
+          for (int i=rpmLed; i<RPM_PIXELS; i++) ledstrip1.setPixelColor(rpmLedList[i], OFF_COLOR);
 
-          if      (rpmVal > OVER_REV_RPM) for (int i=0; i<SHIFT_PIXELS; i++) ledstrip.setPixelColor(shiftLedList[i], OVER_REV_COLOR);
-          else if (rpmVal > SHIFT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip.setPixelColor(shiftLedList[i], SHIFT_COLOR);
-          else if (rpmVal > SHORT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip.setPixelColor(shiftLedList[i], SHORT_COLOR);
-          //else                          for (int i=0; i<SHIFT_PIXELS; i++) ledstrip.setPixelColor(shiftLedList[i], OFF_COLOR);
+          if      (rpmVal > OVER_REV_RPM) for (int i=0; i<SHIFT_PIXELS; i++) ledstrip1.setPixelColor(shiftLedList[i], OVER_REV_COLOR);
+          else if (rpmVal > SHIFT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip1.setPixelColor(shiftLedList[i], SHIFT_COLOR);
+          else if (rpmVal > SHORT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip1.setPixelColor(shiftLedList[i], SHORT_COLOR);
+          else                            for (int i=0; i<SHIFT_PIXELS; i++) ledstrip1.setPixelColor(shiftLedList[i], OFF_COLOR);
+
+          for (int i=0; i<rpmLed && i<RPM_PIXELS; i++) ledstrip2.setPixelColor(rpmLedList[i], ALL_COLOR[bLeds]);
+          for (int i=rpmLed; i<RPM_PIXELS; i++) ledstrip2.setPixelColor(rpmLedList[i], OFF_COLOR);
+
+          if      (rpmVal > OVER_REV_RPM) for (int i=0; i<SHIFT_PIXELS; i++) ledstrip2.setPixelColor(shiftLedList[i], OVER_REV_COLOR);
+          else if (rpmVal > SHIFT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip2.setPixelColor(shiftLedList[i], SHIFT_COLOR);
+          else if (rpmVal > SHORT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip2.setPixelColor(shiftLedList[i], SHORT_COLOR);
+          else                            for (int i=0; i<SHIFT_PIXELS; i++) ledstrip2.setPixelColor(shiftLedList[i], OFF_COLOR);
 
           updatesPerSecond++;
-          ledstrip.show();
+          ledstrip1.show();
+          ledstrip2.show();
         }
 
         if (millis() > timeNext) {
-          lcd.setCursor(100, 5);
-          lcd.setFontSize(FONT_SIZE_LARGE);
-          lcd.printInt(updatesPerSecond, 3);
-
+          //myGLCD.setColor(VGA_WHITE);
+          myGLCD.setFont(BigFont);
+          //myGLCD.print("FPS", 220, 20);
+          myGLCD.printNumI(updatesPerSecond, 268, 40, 2);
+          
           updatesPerSecond = 0;
           timeNext = millis() + 1000;
         }
@@ -346,50 +353,60 @@ private:
 
     void initLoggerScreen()
     {
-        lcd.clear();
-        lcd.backlight(true);
-
-        /*
-        lcd.setFontSize(FONT_SIZE_MEDIUM);
-        lcd.setCursor(40, 4);
-        lcd.printLong((long)12345, 5);
-        lcd.setCursor(40, 6);
-        lcd.printLong((long)67890, 5);
-        */
+        myGLCD.clrScr();
+      
+        myGLCD.setColor(VGA_WHITE);
+        myGLCD.setBackColor(VGA_BLACK);
+        myGLCD.setFont(BigFont);
         
-        lcd.setFontSize(FONT_SIZE_SMALL);
-        lcd.setCursor(0, 3);
-        lcd.print("km/h");
-        lcd.setCursor(64, 3);
-        lcd.print("rpm");
+        myGLCD.print("RPM", 20, 20);
+        myGLCD.print("KMH", 20, 100);
         
-        // MINIMAL TEST
-        /*
-        lcd.setCursor(0, 5);
-        lcd.print("THR:   %");
-        lcd.setCursor(80, 5);
-        lcd.print("AIR:   C");
-        */
+        myGLCD.print("FPS", 220, 20);
+        
+        myGLCD.print("PERF", 220, 80);
+        myGLCD.print("BEST", 220, 140);
+        myGLCD.print("    -", 220, 100);
+        myGLCD.print("    -", 220, 160);
+        
+        myButtons.setButtonColors(VGA_WHITE, VGA_GRAY, VGA_WHITE, VGA_RED, VGA_NAVY);
+        myButtons.drawButtons();
     }
 };
 
 static COBDLogger logger;
 
-void setup()
-{    
-    ledstrip.begin();
+void setup() {
+  myGLCD.InitLCD();
+  myGLCD.clrScr();
+  myGLCD.setFont(BigFont);
+
+  myTouch.InitTouch(1);
+  myTouch.setPrecision(PREC_LOW);
+
+  myButtons.setTextFont(SmallFont);
+  buttonMode = myButtons.addButton( 10, 200, 68, 30, "MODE");
+  buttonLeds = myButtons.addButton( 88, 200, 67, 30, "LEDS");
+  buttonPerf = myButtons.addButton(163, 200, 68, 30, "PERF");
+  buttonOther = myButtons.addButton(243, 200, 67, 30, "OTHER");
   
-    lcd.begin();
-    lcd.setFontSize(FONT_SIZE_MEDIUM);
-    lcd.println("OBDled");
+  ledstrip1.begin();
+  ledstrip2.begin();
+  
+  logger.begin();
+  logger.initSender();
 
-    logger.begin();
-    logger.initSender();
-
-    logger.setup();
+  logger.setup();
 }
 
-void loop()
-{  
-    logger.loop();
+void loop() {
+  if (myTouch.dataAvailable()) {
+    buttonPressed = myButtons.checkButtons();
+
+    if (buttonPressed == buttonLeds) {
+      bLeds = ++bLeds % 4;
+    }
+  }
+  
+  logger.loop();  
 }
