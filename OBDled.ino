@@ -40,12 +40,11 @@ int buttonMode, buttonLeds, buttonPerf, buttonOther, buttonPressed;
 int bMode = 0;
 int bLeds = 0;
 
-
 /* Neopixel compatible RGB LED strip */
 #include <Adafruit_NeoPixel.h>
 // pin
-#define STRIP_PIN1    3
-#define STRIP_PIN2    4
+#define STRIP_PIN1    8
+#define STRIP_PIN2    9
 // ammount of leds
 #define MIN_PIXELS    0
 #define RPM_PIXELS    29
@@ -59,8 +58,7 @@ int bLeds = 0;
 #define MAX_RPM       4000
 
 // original logger program
-static int lastSpeed = -1;
-static int speed = 0;
+//static int speed = 0;
 static uint8_t lastPid = 0;
 static int lastValue = 0;
 
@@ -69,21 +67,23 @@ static int lastValue = 0;
 #define TIER_NUM3 sizeof(pidTier3)
 
 // logged values
-int rpmVal      = 0; 
-int speedVal    = 0; 
-int throttleVal = 0;
-int tempVal     = 0;
+int rpmVal            = 0; 
+int speedVal          = 0; 
+int throttleVal       = 0;
+int tempVal           = 0;
+int prevRpmValLcd     = 0;
+int prevSpeedValLcd   = 0;
 
 // performance
 #define TARGET_DISTANCE 200
 boolean measuringPerformance = true;
 int prevSpeedVal    = 0;
-float distance        = 0;
+float distance      = 0;
 long speedTime      = 0;
 long firstSpeedTime = 0;
 long prevSpeedTime  = 0;
 long currPerfTime   = 0;
-long bestPerfTime   = 99999;
+long bestPerfTime   = 59999;
 
 // leds
 Adafruit_NeoPixel ledstrip1 = Adafruit_NeoPixel(TOTAL_PIXELS, STRIP_PIN1, NEO_GRB + NEO_KHZ800);
@@ -96,10 +96,28 @@ uint32_t SHORT_COLOR    = ledstrip1.Color(0, 20, 0);
 uint32_t SHIFT_COLOR    = ledstrip1.Color(0, 0, 30);
 uint32_t OVER_REV_COLOR = ledstrip1.Color(20, 20, 20);
 
-uint32_t ALL_COLOR[] = {  ledstrip1.Color(20, 0, 0),
-                          ledstrip1.Color( 0,20, 0),
-                          ledstrip1.Color( 0, 0,20),
-                          ledstrip1.Color(15,15,15)  };
+uint32_t ALL_COLOR[] =  { ledstrip1.Color(30, 0, 0),
+                          ledstrip1.Color(30,30, 0),
+                          ledstrip1.Color( 0,30, 0),
+                          ledstrip1.Color( 0,30,30),
+                          ledstrip1.Color( 0, 0,30),
+                          ledstrip1.Color(30, 0,30),
+                          ledstrip1.Color(20,20,20),
+                          ledstrip1.Color(50, 0, 0),
+                          ledstrip1.Color(50,50, 0),
+                          ledstrip1.Color( 0,50, 0),
+                          ledstrip1.Color( 0,50,50),
+                          ledstrip1.Color( 0, 0,50),
+                          ledstrip1.Color(50, 0,50),
+                          ledstrip1.Color(35,35,35),
+                          ledstrip1.Color(80, 0, 0),
+                          ledstrip1.Color(80,80, 0),
+                          ledstrip1.Color( 0,80, 0),
+                          ledstrip1.Color( 0,80,80),
+                          ledstrip1.Color( 0, 0,80),
+                          ledstrip1.Color(80, 0,80),
+                          ledstrip1.Color(50,50,50)
+                        };
 
 // strip
 static byte rpmLedList[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29};
@@ -232,50 +250,59 @@ private:
         if (state & STATE_ACC_READY) myGLCD.print("OK", 100, 200);
         
         // TO DO: This is a good place to test the strips
+        for (int i=0; i<30; i++) ledstrip1.setPixelColor(rpmLedList[i], ALL_COLOR[bLeds]);
+        ledstrip1.show();
     }
     
     void showLoggerData(byte pid, int value)
     {      
-        char buf[8];
         switch (pid) {
         case PID_RPM:
 
             rpmVal = (unsigned int)value % 10000;
             rpmLed = map(rpmVal, MIN_RPM, MAX_RPM, MIN_PIXELS, RPM_PIXELS);
 
-            myGLCD.setFont(SevenSegNumFont);
+            if (abs(rpmVal - prevRpmValLcd) > 50) {              
+              myGLCD.setFont(SevenSegNumFont);
+  
+              if (rpmVal < 1000) {
+                myGLCD.setColor(VGA_BLACK);
+                myGLCD.fillRect(20,40,51,89);
+                myGLCD.setColor(VGA_WHITE);
+                myGLCD.printNumI(rpmVal, 52, 40, 3);
+              } else {
+                myGLCD.printNumI(rpmVal, 20, 40, 4);
+              }
 
-            if (rpmVal < 1000) {
-              myGLCD.setColor(VGA_BLACK);
-              myGLCD.fillRect(20,40,51,89);
-              myGLCD.setColor(VGA_WHITE);
-              myGLCD.printNumI(rpmVal, 52, 40, 3);
-            } else {
-              myGLCD.printNumI(rpmVal, 20, 40, 4);
+              prevRpmValLcd = rpmVal;
+              updateLeds = true;
             }
             
-            updateLeds = true;
-            
             break;
+            
         case PID_SPEED:
 
             prevSpeedVal = speedVal;
             speedVal = (unsigned int)value % 1000; 
 
-            myGLCD.setFont(SevenSegNumFont);
+            if (prevSpeedValLcd != speedVal) {
+              myGLCD.setFont(SevenSegNumFont);
+              
+              if (speedVal < 10) {
+                myGLCD.setColor(VGA_BLACK);
+                myGLCD.fillRect(52,120,115,169);
+                myGLCD.setColor(VGA_WHITE);
+                myGLCD.printNumI(speedVal, 116, 120, 1);
+              } else if (speedVal < 100) {
+                myGLCD.setColor(VGA_BLACK);
+                myGLCD.fillRect(52,120,83,169);
+                myGLCD.setColor(VGA_WHITE);
+                myGLCD.printNumI(speedVal, 84, 120, 2);
+              } else {
+                myGLCD.printNumI(speedVal, 52, 120, 3);
+              }
 
-            if (speedVal < 10) {
-              myGLCD.setColor(VGA_BLACK);
-              myGLCD.fillRect(52,120,115,169);
-              myGLCD.setColor(VGA_WHITE);
-              myGLCD.printNumI(speedVal, 116, 120, 1);
-            } else if (speedVal < 100) {
-              myGLCD.setColor(VGA_BLACK);
-              myGLCD.fillRect(52,120,83,169);
-              myGLCD.setColor(VGA_WHITE);
-              myGLCD.printNumI(speedVal, 84, 120, 2);
-            } else {
-              myGLCD.printNumI(speedVal, 52, 120, 3);
+              prevSpeedValLcd = speedVal;
             }
 
             if (speedVal == 0) {
@@ -297,10 +324,12 @@ private:
                 if (currPerfTime < bestPerfTime) bestPerfTime = currPerfTime;
 
                 myGLCD.setFont(BigFont);
-                //myGLCD.print("PERF", 220, 80);
-                //myGLCD.print("BEST", 220, 140);
-                myGLCD.printNumI(currPerfTime, 220, 100, 5);
                 myGLCD.printNumI(bestPerfTime, 220, 160, 5);
+                if (currPerfTime < 59999) {
+                  myGLCD.printNumI(currPerfTime, 220, 100, 5);
+                } else {
+                  myGLCD.print(" OVER", 220, 100);
+                }
               }
             }
             
@@ -341,10 +370,8 @@ private:
         }
 
         if (millis() > timeNext) {
-          //myGLCD.setColor(VGA_WHITE);
           myGLCD.setFont(BigFont);
-          //myGLCD.print("FPS", 220, 20);
-          myGLCD.printNumI(updatesPerSecond, 268, 40, 2);
+          myGLCD.printNumI(updatesPerSecond, 268, 20, 2);
           
           updatesPerSecond = 0;
           timeNext = millis() + 1000;
@@ -366,8 +393,8 @@ private:
         
         myGLCD.print("PERF", 220, 80);
         myGLCD.print("BEST", 220, 140);
-        myGLCD.print("    -", 220, 100);
-        myGLCD.print("    -", 220, 160);
+        //myGLCD.print("     ", 220, 100);
+        //myGLCD.print("     ", 220, 160);
         
         myButtons.setButtonColors(VGA_WHITE, VGA_GRAY, VGA_WHITE, VGA_RED, VGA_NAVY);
         myButtons.drawButtons();
