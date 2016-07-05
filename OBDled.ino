@@ -36,9 +36,12 @@ extern uint8_t SevenSegNumFont[];
 UTFT myGLCD(SSD1289,38,39,40,41);
 ITDB02_Touch myTouch(6,5,4,3,2);
 UTFT_Buttons myButtons(&myGLCD, &myTouch);
-int buttonMode, buttonLeds, buttonPerf, buttonOther, buttonPressed;
+// buttons
+int buttonMode, buttonLeds, buttonPerf, buttonOthr, buttonPressed;
 int bMode = 0;
-int bLeds = 0;
+int bLeds = 6;
+char* strMode[] = {"rpm3", "rpm2", "rpm1", "on 2", "on 1"};
+char* strLeds[] = {"red ", "yllw", "gren", "cyan", "blue", "prpl", "whte", "off "};
 
 /* Neopixel compatible RGB LED strip */
 #include <Adafruit_NeoPixel.h>
@@ -47,18 +50,16 @@ int bLeds = 0;
 #define STRIP_PIN2    9
 // ammount of leds
 #define MIN_PIXELS    0
-#define RPM_PIXELS    29
-#define SHIFT_PIXELS  1
+#define RPM_PIXELS    30
+#define SHIFT_PIXELS  5
 #define TOTAL_PIXELS  30
 // revolutions per minute
 #define MIN_RPM       0
-#define SHORT_RPM     2800
-#define SHIFT_RPM     3200
-#define OVER_REV_RPM  3600
+#define SHORT_RPM     3000
+#define SHIFT_RPM     3500
 #define MAX_RPM       4000
 
 // original logger program
-//static int speed = 0;
 static uint8_t lastPid = 0;
 static int lastValue = 0;
 
@@ -89,39 +90,52 @@ long bestPerfTime   = 59999;
 Adafruit_NeoPixel ledstrip1 = Adafruit_NeoPixel(TOTAL_PIXELS, STRIP_PIN1, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel ledstrip2 = Adafruit_NeoPixel(TOTAL_PIXELS, STRIP_PIN2, NEO_GRB + NEO_KHZ800);
 
-uint32_t TEST_COLOR     = ledstrip1.Color(20, 20, 20);
-uint32_t RPM_COLOR      = ledstrip1.Color(20, 0, 0);
-uint32_t OFF_COLOR      = ledstrip1.Color(0, 0, 0);
-uint32_t SHORT_COLOR    = ledstrip1.Color(0, 20, 0);
-uint32_t SHIFT_COLOR    = ledstrip1.Color(0, 0, 30);
-uint32_t OVER_REV_COLOR = ledstrip1.Color(20, 20, 20);
+uint32_t OFF_COLOR      = ledstrip1.Color(  0,  0,  0);
+uint32_t SHORT_COLOR    = ledstrip1.Color(  0,120,  0);
+uint32_t SHIFT_COLOR    = ledstrip1.Color(  0,  0,120);
 
-uint32_t ALL_COLOR[] =  { ledstrip1.Color(30, 0, 0),
-                          ledstrip1.Color(30,30, 0),
-                          ledstrip1.Color( 0,30, 0),
-                          ledstrip1.Color( 0,30,30),
-                          ledstrip1.Color( 0, 0,30),
-                          ledstrip1.Color(30, 0,30),
-                          ledstrip1.Color(20,20,20),
-                          ledstrip1.Color(50, 0, 0),
-                          ledstrip1.Color(50,50, 0),
-                          ledstrip1.Color( 0,50, 0),
-                          ledstrip1.Color( 0,50,50),
-                          ledstrip1.Color( 0, 0,50),
-                          ledstrip1.Color(50, 0,50),
-                          ledstrip1.Color(35,35,35),
-                          ledstrip1.Color(80, 0, 0),
-                          ledstrip1.Color(80,80, 0),
-                          ledstrip1.Color( 0,80, 0),
-                          ledstrip1.Color( 0,80,80),
-                          ledstrip1.Color( 0, 0,80),
-                          ledstrip1.Color(80, 0,80),
-                          ledstrip1.Color(50,50,50)
+uint32_t ALL_COLOR[] =  { ledstrip1.Color(120,  0,  0),  //red
+                          ledstrip1.Color( 60, 60,  0),  //yellow
+                          ledstrip1.Color(  0,120,  0),  //green
+                          ledstrip1.Color(  0, 60, 60),  //cyan
+                          ledstrip1.Color(  0,  0,120),  //blue
+                          ledstrip1.Color( 60,  0, 60),  //magenta
+                          ledstrip1.Color( 40, 40, 40),  //white
+                          ledstrip1.Color(  0,  0,  0)   //off
                         };
+uint32_t MAT_COLOR[3][8] = {
+  { ledstrip1.Color(240,  0,  0),  //red
+    ledstrip1.Color(180,180,  0),  //yellow
+    ledstrip1.Color(  0,240,  0),  //green
+    ledstrip1.Color(  0,180,180),  //cyan
+    ledstrip1.Color(  0,  0,240),  //blue
+    ledstrip1.Color(180,  0,180),  //magenta
+    ledstrip1.Color(120,120,120),  //white
+    ledstrip1.Color(  0,  0,  0)   //off
+  },
+  { ledstrip1.Color(180,  0,  0),  //red
+    ledstrip1.Color(135,135,  0),  //yellow
+    ledstrip1.Color(  0,180,  0),  //green
+    ledstrip1.Color(  0,135,135),  //cyan
+    ledstrip1.Color(  0,  0,180),  //blue
+    ledstrip1.Color(135,  0,135),  //magenta
+    ledstrip1.Color( 90, 90, 90),  //white
+    ledstrip1.Color(  0,  0,  0)   //off
+  },
+  { ledstrip1.Color(120,  0,  0),  //red
+    ledstrip1.Color( 90, 90,  0),  //yellow
+    ledstrip1.Color(  0,120,  0),  //green
+    ledstrip1.Color(  0, 90, 90),  //cyan
+    ledstrip1.Color(  0,  0,120),  //blue
+    ledstrip1.Color( 90,  0, 90),  //magenta
+    ledstrip1.Color( 60, 60, 60),  //white
+    ledstrip1.Color(  0,  0,  0)   //off
+  }
+};
 
 // strip
-static byte rpmLedList[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29};
-static byte shiftLedList[] = {0};
+static byte rpmLedList[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29};
+static byte shiftLedList[] = {0,1,2,3,4};
 
 boolean updateLeds = false;
 int rpmLed   = 0;
@@ -155,7 +169,6 @@ public:
         // TO DO: Consider changing to
         // byte read(const byte pid[], byte count, int result[]);
         // to read multiple PID at the same time
-
         /* 
           Las variables static funcionan como en C, una vez definidas su valor se conserva por el resto del programa
           aunque la ejecucion de la funcion en la que se encuentran termine, y esta vuelva a ser llamada.
@@ -248,14 +261,25 @@ private:
 
         if (state & STATE_OBD_READY) myGLCD.print("OK", 100, 160);
         if (state & STATE_ACC_READY) myGLCD.print("OK", 100, 200);
-        
+
+        if (myTouch.dataAvailable()) {
+          buttonPressed = myButtons.checkButtons();
+          bLeds = ++bLeds % 8;
+          updateLeds = true;
+        }
+
+        uint32_t color = MAT_COLOR[2][bLeds];
         // TO DO: This is a good place to test the strips
-        for (int i=0; i<30; i++) ledstrip1.setPixelColor(rpmLedList[i], ALL_COLOR[bLeds]);
+        for (int i=0; i<30; i++) ledstrip1.setPixelColor(rpmLedList[i], color);
+        for (int i=0; i<30; i++) ledstrip2.setPixelColor(rpmLedList[i], color);
         ledstrip1.show();
+        ledstrip2.show();
     }
     
     void showLoggerData(byte pid, int value)
-    {      
+    {   
+        updatesPerSecond++;
+        
         switch (pid) {
         case PID_RPM:
 
@@ -267,15 +291,18 @@ private:
   
               if (rpmVal < 1000) {
                 myGLCD.setColor(VGA_BLACK);
-                myGLCD.fillRect(20,40,51,89);
+                myGLCD.fillRect(10,30,41,79);
                 myGLCD.setColor(VGA_WHITE);
-                myGLCD.printNumI(rpmVal, 52, 40, 3);
+                myGLCD.printNumI(rpmVal, 42, 30, 3);
               } else {
-                myGLCD.printNumI(rpmVal, 20, 40, 4);
+                if (rpmVal < 3000) myGLCD.setColor(VGA_WHITE);
+                else if (rpmVal < 3500) myGLCD.setColor(VGA_YELLOW);
+                else myGLCD.setColor(VGA_RED);
+                myGLCD.printNumI(rpmVal, 10, 30, 4);
               }
 
               prevRpmValLcd = rpmVal;
-              updateLeds = true;
+              if (bMode < 3) updateLeds = true;
             }
             
             break;
@@ -290,16 +317,16 @@ private:
               
               if (speedVal < 10) {
                 myGLCD.setColor(VGA_BLACK);
-                myGLCD.fillRect(52,120,115,169);
+                myGLCD.fillRect(42,110,105,159);
                 myGLCD.setColor(VGA_WHITE);
-                myGLCD.printNumI(speedVal, 116, 120, 1);
+                myGLCD.printNumI(speedVal, 106, 110, 1);
               } else if (speedVal < 100) {
                 myGLCD.setColor(VGA_BLACK);
-                myGLCD.fillRect(52,120,83,169);
+                myGLCD.fillRect(42,110, 73,159);
                 myGLCD.setColor(VGA_WHITE);
-                myGLCD.printNumI(speedVal, 84, 120, 2);
+                myGLCD.printNumI(speedVal,  74, 110, 2);
               } else {
-                myGLCD.printNumI(speedVal, 52, 120, 3);
+                myGLCD.printNumI(speedVal,  42, 110, 3);
               }
 
               prevSpeedValLcd = speedVal;
@@ -316,6 +343,9 @@ private:
               // speedVal + prevSpeedVal / 2  --> average speed in km/h
               // speedTime - prevSpeedTime    --> elapsed time in ms
               distance += (speedVal + prevSpeedVal) * (speedTime - prevSpeedTime) / 7200;
+
+              myGLCD.setFont(BigFont);
+              myGLCD.printNumF(distance,1,230,130,'.',5);
               
               if (distance > TARGET_DISTANCE) {
                 measuringPerformance = false;
@@ -324,11 +354,13 @@ private:
                 if (currPerfTime < bestPerfTime) bestPerfTime = currPerfTime;
 
                 myGLCD.setFont(BigFont);
-                myGLCD.printNumI(bestPerfTime, 220, 160, 5);
+                //myGLCD.printNumI(bestPerfTime, 220, 160, 5);
+                myGLCD.printNumF((float)(bestPerfTime / 1000),2,230,90,'.',5);
                 if (currPerfTime < 59999) {
-                  myGLCD.printNumI(currPerfTime, 220, 100, 5);
+                  //myGLCD.printNumI(currPerfTime, 220, 100, 5);
+                  myGLCD.printNumF((float)(currPerfTime / 1000),2,230,50,'.',5);
                 } else {
-                  myGLCD.print(" OVER", 220, 100);
+                  myGLCD.print(" OVER", 230, 50);
                 }
               }
             }
@@ -347,31 +379,61 @@ private:
 
         if (updateLeds) {
           updateLeds = false;
+
+          if (bMode < 3) {
+            uint32_t color = MAT_COLOR[bMode][bLeds];
+
+            // Illuminates LEDs according to RPM
+            for (int i=0; i<rpmLed && i<RPM_PIXELS; i++) {
+              ledstrip1.setPixelColor(rpmLedList[i], color);
+              ledstrip2.setPixelColor(rpmLedList[i], color);
+            }
+            for (int i=rpmLed; i<RPM_PIXELS; i++) {
+              ledstrip1.setPixelColor(rpmLedList[i], OFF_COLOR);
+              ledstrip2.setPixelColor(rpmLedList[i], OFF_COLOR);
+            }
+/*        
+          } else if (bMode == 1) {
+
+            // Illuminates LEDs according to RPM and signals a good shift
+            for (int i=0; i<rpmLed && i<RPM_PIXELS; i++) {
+              ledstrip1.setPixelColor(rpmLedList[i], ALL_COLOR[bLeds]);
+              ledstrip2.setPixelColor(rpmLedList[i], ALL_COLOR[bLeds]);
+            }
+            for (int i=rpmLed; i<RPM_PIXELS; i++) {
+              ledstrip1.setPixelColor(rpmLedList[i], OFF_COLOR);
+              ledstrip2.setPixelColor(rpmLedList[i], OFF_COLOR);
+            }
+            if        (rpmVal > SHIFT_RPM) {
+              for (int i=0; i<SHIFT_PIXELS; i++) {
+                ledstrip1.setPixelColor(shiftLedList[i], SHIFT_COLOR);
+                ledstrip2.setPixelColor(shiftLedList[i], SHIFT_COLOR);
+              }
+            } else if (rpmVal > SHORT_RPM) {
+              for (int i=0; i<SHIFT_PIXELS; i++) {
+                ledstrip1.setPixelColor(shiftLedList[i], SHORT_COLOR);
+                ledstrip2.setPixelColor(shiftLedList[i], SHORT_COLOR);
+              }
+            }
+*/ 
+          } else {
+            uint32_t color = MAT_COLOR[bMode-2][bLeds];
+
+            // Turns on all LEDs
+            for (int i=0; i<TOTAL_PIXELS; i++) {
+              ledstrip1.setPixelColor(rpmLedList[i], color);
+              ledstrip2.setPixelColor(rpmLedList[i], color);
+            }   
+          }
           
-          for (int i=0; i<rpmLed && i<RPM_PIXELS; i++) ledstrip1.setPixelColor(rpmLedList[i], ALL_COLOR[bLeds]);
-          for (int i=rpmLed; i<RPM_PIXELS; i++) ledstrip1.setPixelColor(rpmLedList[i], OFF_COLOR);
-
-          if      (rpmVal > OVER_REV_RPM) for (int i=0; i<SHIFT_PIXELS; i++) ledstrip1.setPixelColor(shiftLedList[i], OVER_REV_COLOR);
-          else if (rpmVal > SHIFT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip1.setPixelColor(shiftLedList[i], SHIFT_COLOR);
-          else if (rpmVal > SHORT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip1.setPixelColor(shiftLedList[i], SHORT_COLOR);
-          else                            for (int i=0; i<SHIFT_PIXELS; i++) ledstrip1.setPixelColor(shiftLedList[i], OFF_COLOR);
-
-          for (int i=0; i<rpmLed && i<RPM_PIXELS; i++) ledstrip2.setPixelColor(rpmLedList[i], ALL_COLOR[bLeds]);
-          for (int i=rpmLed; i<RPM_PIXELS; i++) ledstrip2.setPixelColor(rpmLedList[i], OFF_COLOR);
-
-          if      (rpmVal > OVER_REV_RPM) for (int i=0; i<SHIFT_PIXELS; i++) ledstrip2.setPixelColor(shiftLedList[i], OVER_REV_COLOR);
-          else if (rpmVal > SHIFT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip2.setPixelColor(shiftLedList[i], SHIFT_COLOR);
-          else if (rpmVal > SHORT_RPM)    for (int i=0; i<SHIFT_PIXELS; i++) ledstrip2.setPixelColor(shiftLedList[i], SHORT_COLOR);
-          else                            for (int i=0; i<SHIFT_PIXELS; i++) ledstrip2.setPixelColor(shiftLedList[i], OFF_COLOR);
-
-          updatesPerSecond++;
           ledstrip1.show();
           ledstrip2.show();
         }
 
         if (millis() > timeNext) {
           myGLCD.setFont(BigFont);
-          myGLCD.printNumI(updatesPerSecond, 268, 20, 2);
+          myGLCD.setColor(VGA_WHITE);
+          myGLCD.printNumI(updatesPerSecond, 278, 10, 2);
           
           updatesPerSecond = 0;
           timeNext = millis() + 1000;
@@ -386,15 +448,16 @@ private:
         myGLCD.setBackColor(VGA_BLACK);
         myGLCD.setFont(BigFont);
         
-        myGLCD.print("RPM", 20, 20);
-        myGLCD.print("KMH", 20, 100);
+        myGLCD.print("RPM", 10, 10);
+        myGLCD.print("KMH", 10, 90);
         
-        myGLCD.print("FPS", 220, 20);
-        
-        myGLCD.print("PERF", 220, 80);
-        myGLCD.print("BEST", 220, 140);
-        //myGLCD.print("     ", 220, 100);
-        //myGLCD.print("     ", 220, 160);
+        myGLCD.print("FPS", 170,  10);
+        //myGLCD.print(" ", 170,  30);
+        myGLCD.print("CUR", 170,  50);
+        //myGLCD.print(" ", 170,  70);
+        myGLCD.print("BST", 170,  90);
+        //myGLCD.print(" ", 170, 110);
+        myGLCD.print("DIS", 170, 130);
         
         myButtons.setButtonColors(VGA_WHITE, VGA_GRAY, VGA_WHITE, VGA_RED, VGA_NAVY);
         myButtons.drawButtons();
@@ -411,11 +474,11 @@ void setup() {
   myTouch.InitTouch(1);
   myTouch.setPrecision(PREC_LOW);
 
-  myButtons.setTextFont(SmallFont);
-  buttonMode = myButtons.addButton( 10, 200, 68, 30, "MODE");
-  buttonLeds = myButtons.addButton( 88, 200, 67, 30, "LEDS");
-  buttonPerf = myButtons.addButton(163, 200, 68, 30, "PERF");
-  buttonOther = myButtons.addButton(243, 200, 67, 30, "OTHER");
+  myButtons.setTextFont(BigFont);
+  buttonMode = myButtons.addButton(  4, 200, 75, 30, "MODE");
+  buttonLeds = myButtons.addButton( 83, 200, 75, 30, "LEDS");
+  buttonPerf = myButtons.addButton(162, 200, 75, 30, "PERF");
+  buttonOthr = myButtons.addButton(241, 200, 75, 30, "OTHR", BUTTON_DISABLED);
   
   ledstrip1.begin();
   ledstrip2.begin();
@@ -429,11 +492,21 @@ void setup() {
 void loop() {
   if (myTouch.dataAvailable()) {
     buttonPressed = myButtons.checkButtons();
+    myGLCD.setFont(BigFont);
 
-    if (buttonPressed == buttonLeds) {
-      bLeds = ++bLeds % 4;
+    if        (buttonPressed == buttonLeds) {
+      bLeds = ++bLeds % 8;
+      myGLCD.print(strLeds[bLeds], 89,170);
+      updateLeds = true;
+    } else if (buttonPressed == buttonMode) {
+      bMode = ++bMode % 5;
+      myGLCD.print(strMode[bMode], 10,170);
+      updateLeds = true;
+    } else if (buttonPressed == buttonPerf) {
+      bestPerfTime = 59999;
+      myGLCD.printNumF((float)(bestPerfTime / 1000),2,230,90,'.',5);
     }
   }
   
-  logger.loop();  
+  logger.loop();
 }
